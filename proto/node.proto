@@ -1,0 +1,62 @@
+syntax = "proto3";
+package node;
+
+// The greeting service definition.
+option go_package = "./node";
+
+message HearbeatResp {
+  bool ack=1;
+  NodeInfo redirect=2;
+}
+
+message NodeInfo {
+  uint64 id = 1;
+  int64 character = 2;
+  int64 startTime=3;
+  string serviceAddress=4;
+}
+
+message MessageReq{
+  NodeInfo info=1;
+  int64 messageType=2;
+}
+
+message MessageResp{
+  bool ack=1;
+}
+
+message EmptyMessage{}
+
+message NodeIdListResp{
+  repeated uint64 nodeIds=1;
+}
+
+message NodeInfoResp{
+  repeated NodeInfo nodeInfos=1;
+}
+
+message MeetResp{
+  bool ack=1;
+  NodeInfo redirect=2;
+}
+
+message LeaveReq {
+  NodeInfo self = 1;
+  NodeInfo master = 2; 
+}
+
+message LeaveResp {
+  bool ack=1;
+}
+
+service Node {
+  rpc HearbeatRpc (NodeInfo) returns (HearbeatResp) {}
+  rpc NodeMessageRpc(MessageReq) returns (MessageResp) {}
+  rpc PeerInfosRpc(EmptyMessage) returns(NodeInfoResp) {}
+  rpc PeerIdListRpc(EmptyMessage) returns(NodeIdListResp) {}
+  rpc MeetRpc(NodeInfo) returns(MeetResp) {}
+  rpc LeaveRpc(LeaveReq) returns(LeaveResp){}
+}
+
+
+// protoc --proto_path=./proto --go_out=./node --go_opt=paths=source_relative --go-grpc_out=./node --go-grpc_opt=paths=source_relative ./proto/node.proto
