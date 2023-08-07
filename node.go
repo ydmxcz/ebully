@@ -178,12 +178,8 @@ func (n *Node) startGrpcServer() {
 	// 注册服务
 	nodepb.RegisterNodeServer(n.grpcServer, n)
 	// 起服务
-	go func() {
-		n.logger.Sugar().Info("gRPC server is running,address:", n.selfAddr)
-		if err := n.grpcServer.Serve(lis); err != nil {
-			panic(err)
-		}
-	}()
+	n.logger.Sugar().Info("gRPC server is running,address:", n.selfAddr)
+	n.logger.Sugar().Info("gRPC server stop", n.grpcServer.Serve(lis))
 }
 
 func (n *Node) Start() {
@@ -191,7 +187,6 @@ func (n *Node) Start() {
 }
 
 func (n *Node) start() {
-	n.startGrpcServer()
 	// no master node meta
 	if n.masterMeta == nil {
 		n.becomeMaster()
@@ -207,6 +202,7 @@ func (n *Node) start() {
 		}
 		go n.startTcpProxyServer()
 	}
+	n.startGrpcServer()
 	// n.logger.Debug("", zap.Uint64("node id", n.selfInfo.Id))
 }
 

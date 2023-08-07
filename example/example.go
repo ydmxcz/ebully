@@ -56,7 +56,7 @@ func main() {
 	}
 	logger.Info("finish load config", zap.Any("config", cfg))
 	node := ebully.NewEBully(cfg)
-	node.Start()
+	go node.Start()
 	http.HandleFunc("/peers", func(resp http.ResponseWriter, _ *http.Request) {
 		peerInfos := node.PeerList()
 		b, err := json.Marshal(peerInfos)
