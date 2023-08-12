@@ -11,7 +11,8 @@ import (
 	"time"
 
 	"github.com/alphadose/haxmap"
-	nodepb "github.com/ydmxcz/ebully/node"
+	"github.com/ydmxcz/ebully/nodeid"
+	nodepb "github.com/ydmxcz/ebully/pb/node"
 	"github.com/ydmxcz/loadbalance"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -92,7 +93,7 @@ func newNode(cfg Config) *Node {
 			ServiceAddress: cfg.ServiceAddress,
 		},
 		retryCount:    cfg.RetryCount,
-		loadbalancer:  loadbalance.NewWeightedDoubleQueue[uint64, *NodeMeta](),
+		loadbalancer:  loadbalance.NewDynamicWeighted[uint64, *NodeMeta](),
 		logger:        cfg.Logger,
 		selfAddr:      cfg.SelfAddr,
 		heartbeatTime: cfg.HeartBeatTime,
@@ -101,7 +102,7 @@ func newNode(cfg Config) *Node {
 	}
 	if cfg.MasterAddr != "" {
 		n.masterMeta = NewNodeMeta(&nodepb.NodeInfo{
-			Id: EncodeNodeID(0, cfg.MasterAddr),
+			Id: nodeid.Encode(0, cfg.MasterAddr),
 		})
 	}
 	if n.heartbeatTime == 0 {
@@ -315,7 +316,7 @@ func (n *Node) NodeMessageRpc(ctx context.Context, req *nodepb.MessageReq) (resp
 		}
 	} else if req.MessageType == MasterChange {
 		n.logger.Debug("master node change")
-		tcp4, mem := DecodeNodeID(req.Info.Id)
+		tcp4, mem := nodeid.Decode(req.Info.Id)
 		if n.masterMeta != nil {
 			n.masterMeta.UpdateId(req.Info.Id)
 		} else {

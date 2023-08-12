@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ydmxcz/ebully"
+	"github.com/ydmxcz/ebully/nodeid"
 	"go.uber.org/zap"
 )
 
@@ -37,7 +38,7 @@ func main() {
 		panic(err)
 	}
 	cfg := ebully.Config{
-		ID:             ebully.EncodeNodeID(uint16(*nodeWeight), *selfAddr),
+		ID:             nodeid.Encode(uint16(*nodeWeight), *selfAddr),
 		RetryCount:     3,
 		SelfAddr:       *selfAddr,
 		MasterAddr:     *masterAddr,

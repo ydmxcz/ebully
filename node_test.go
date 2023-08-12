@@ -5,7 +5,8 @@ import (
 	"testing"
 
 	"github.com/ydmxcz/ebully"
-	nodepb "github.com/ydmxcz/ebully/node"
+	"github.com/ydmxcz/ebully/nodeid"
+	nodepb "github.com/ydmxcz/ebully/pb/node"
 )
 
 type testNode struct {
@@ -18,7 +19,7 @@ func TestSelectMaster(t *testing.T) {
 	nodes := []testNode{
 		{
 			NodeInfo: &nodepb.NodeInfo{
-				Id:        ebully.EncodeNodeID(16, "192.168.0.1:8080"),
+				Id:        nodeid.Encode(16, "192.168.0.1:8080"),
 				StartTime: 10000,
 				Character: ebully.Master,
 			},
@@ -26,14 +27,14 @@ func TestSelectMaster(t *testing.T) {
 		},
 		{
 			NodeInfo: &nodepb.NodeInfo{
-				Id:        ebully.EncodeNodeID(8, "192.168.0.1:8081"),
+				Id:        nodeid.Encode(8, "192.168.0.1:8081"),
 				StartTime: 11000,
 				Character: ebully.Follower,
 			},
 			Name: "Node-2",
 		}, {
 			NodeInfo: &nodepb.NodeInfo{
-				Id:        ebully.EncodeNodeID(4, "192.168.0.1:8082"),
+				Id:        nodeid.Encode(4, "192.168.0.1:8082"),
 				StartTime: 9000,
 				Character: ebully.Follower,
 			},
@@ -69,7 +70,7 @@ func TestRand(t *testing.T) {
 		return i < 3
 	})
 	fmt.Println(res)
-	fmt.Println(ebully.EncodeNodeID(0, "192.168.0.200:8081"))
-	tcp4, mem := ebully.DecodeNodeID(4723504784088976)
+	fmt.Println(nodeid.Encode(0, "192.168.0.200:8081"))
+	tcp4, mem := nodeid.Decode(4723504784088976)
 	fmt.Println(string(tcp4[:]), mem)
 }

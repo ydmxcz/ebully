@@ -4,7 +4,7 @@ go 1.20
 
 require (
 	github.com/alphadose/haxmap v1.2.0
-	github.com/ydmxcz/loadbalance v0.0.2
+	github.com/ydmxcz/loadbalance v0.0.4
 	go.uber.org/zap v1.24.0
 	google.golang.org/grpc v1.56.2
 	google.golang.org/protobuf v1.31.0

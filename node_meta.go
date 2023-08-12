@@ -7,7 +7,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/ydmxcz/ebully/node"
+	"github.com/ydmxcz/ebully/nodeid"
+	"github.com/ydmxcz/ebully/pb/node"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -19,10 +20,11 @@ type NodeMeta struct {
 	memory   int
 	tcp4addr string
 	rwLock   sync.RWMutex
+	// client   node.NodeClient
 }
 
 func NewNodeMeta(nodeInfo *node.NodeInfo) *NodeMeta {
-	tcp4addr, memory := DecodeNodeID(nodeInfo.Id)
+	tcp4addr, memory := nodeid.Decode(nodeInfo.Id)
 	nodeMeta := &NodeMeta{
 		info:     nodeInfo,
 		tcp4addr: strings.TrimRight(string(tcp4addr[:]), "\x00"),
@@ -35,7 +37,7 @@ func (meta *NodeMeta) UpdateId(id uint64) *NodeMeta {
 	meta.rwLock.Lock()
 	defer meta.rwLock.Unlock()
 	meta.info.Id = id
-	tcp4, mem := DecodeNodeID(meta.info.Id)
+	tcp4, mem := nodeid.Decode(meta.info.Id)
 	meta.tcp4addr = strings.TrimRight(string(tcp4[:]), "\x00")
 	meta.memory = mem
 	return meta
@@ -45,7 +47,7 @@ func (meta *NodeMeta) UpdateInfo(nodeInfo *node.NodeInfo) *NodeMeta {
 	meta.rwLock.Lock()
 	defer meta.rwLock.Unlock()
 	meta.info = nodeInfo
-	tcp4, mem := DecodeNodeID(meta.info.Id)
+	tcp4, mem := nodeid.Decode(meta.info.Id)
 	meta.tcp4addr = strings.TrimRight(string(tcp4[:]), "\x00")
 	meta.memory = mem
 	return meta
@@ -78,6 +80,16 @@ func (meta *NodeMeta) SendHearbeat(nodeInfo *node.NodeInfo) (*node.HearbeatResp,
 	return grpcClient(meta.Address(), func(nc node.NodeClient) (*node.HearbeatResp, error) {
 		return nc.HearbeatRpc(context.Background(), nodeInfo)
 	})
+}
+
+func createGrpcClient(addr string) (client node.NodeClient, err error) {
+	conn, err := grpc.DialContext(context.Background(), addr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithBlock())
+	if err != nil {
+		return
+	}
+	return node.NewNodeClient(conn), nil
 }
 
 func grpcClient[Resp any](addr string, do func(node.NodeClient) (Resp, error)) (resp Resp, err error) {

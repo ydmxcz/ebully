@@ -4,7 +4,8 @@ import (
 	"errors"
 	"sort"
 
-	nodepb "github.com/ydmxcz/ebully/node"
+	"github.com/ydmxcz/ebully/nodeid"
+	nodepb "github.com/ydmxcz/ebully/pb/node"
 )
 
 type NodeCharacterType int
@@ -28,7 +29,7 @@ func NewEBully(cfg Config) *EBully {
 }
 
 func (e *EBully) Weight() int {
-	return getWeightById(e.ID())
+	return nodeid.Weight(e.ID())
 }
 
 func (e *EBully) ID() uint64 { return e.node.selfInfo.Id }
@@ -52,7 +53,7 @@ var (
 )
 
 func (e *EBully) Meet(masterAddr string) (err error) {
-	tcp4, _ := DecodeNodeID(e.node.selfInfo.Id)
+	tcp4, _ := nodeid.Decode(e.node.selfInfo.Id)
 	if masterAddr == string(tcp4[:]) {
 		return errMasterIsItself
 	}
@@ -63,7 +64,7 @@ func (e *EBully) Meet(masterAddr string) (err error) {
 	}()
 	e.node.masterMeta = &NodeMeta{
 		info: &nodepb.NodeInfo{
-			Id:        EncodeNodeID(0, masterAddr),
+			Id:        nodeid.Encode(0, masterAddr),
 			Character: Master,
 		},
 		tcp4addr: masterAddr,
