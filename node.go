@@ -64,16 +64,19 @@ type Node struct {
 	ctx       context.Context
 	cancleCtx context.CancelFunc
 
-	selfInfo    *nodepb.NodeInfo
-	hearbeatMap *haxmap.Map[uint64, int64]
-	selfAddr    string
-	masterMeta  *NodeMeta
+	selfInfo   *nodepb.NodeInfo
+	selfAddr   string
+	masterMeta *NodeMeta
 	// follower node hearbeat time
 	heartbeatTime time.Duration
 	// node reconnect count
 	retryCount int
 
-	loadbalancer *loadbalance.DynamicWeighted[uint64, *NodeMeta]
+	selfFollowersHearbeat *haxmap.Map[uint64, int64]
+	selfFollowers         *loadbalance.DynamicWeighted[uint64, *NodeMeta]
+
+	peers       *haxmap.Map[uint64, *NodeMeta]
+	totalNumber *haxmap.Map[uint64, *loadbalance.DynamicWeighted[uint64, *NodeMeta]]
 
 	grpcServer     *grpc.Server
 	logger         *zap.Logger
@@ -92,13 +95,13 @@ func newNode(cfg Config) *Node {
 			StartTime:      getTime(),
 			ServiceAddress: cfg.ServiceAddress,
 		},
-		retryCount:    cfg.RetryCount,
-		loadbalancer:  loadbalance.NewDynamicWeighted[uint64, *NodeMeta](),
-		logger:        cfg.Logger,
-		selfAddr:      cfg.SelfAddr,
-		heartbeatTime: cfg.HeartBeatTime,
-		hearbeatMap:   haxmap.New[uint64, int64](8),
-		listener:      cfg.Listener,
+		retryCount:            cfg.RetryCount,
+		selfFollowers:         loadbalance.NewDynamicWeighted[uint64, *NodeMeta](),
+		logger:                cfg.Logger,
+		selfAddr:              cfg.SelfAddr,
+		heartbeatTime:         cfg.HeartBeatTime,
+		selfFollowersHearbeat: haxmap.New[uint64, int64](8),
+		listener:              cfg.Listener,
 	}
 	if cfg.MasterAddr != "" {
 		n.masterMeta = NewNodeMeta(&nodepb.NodeInfo{
@@ -144,11 +147,11 @@ func (n *Node) reverseProxy(conn net.Conn) {
 	// 处理进来的连接
 	defer conn.Close()
 	// 负载均衡
-	ins := n.loadbalancer.Select()
+	ins := n.selfFollowers.Select()
 	if ins == nil {
 		return
 	}
-	n.logger.Sugar().Debugln(n.loadbalancer.Size(), ins)
+	n.logger.Sugar().Debugln(n.selfFollowers.Size(), ins)
 	fconn, err := net.Dial("tcp", ins.ServiceAddress())
 	if err != nil {
 		return
@@ -217,8 +220,8 @@ func (n *Node) becomeMaster() {
 	}
 	n.ctx, n.cancleCtx = context.WithCancel(context.Background())
 	n.SetCharacter(Master)
-	n.loadbalancer.Add(NewNodeMeta(n.selfInfo))
-	n.hearbeatMap.Set(n.selfInfo.Id, 0)
+	n.selfFollowers.Add(NewNodeMeta(n.selfInfo))
+	n.selfFollowersHearbeat.Set(n.selfInfo.Id, 0)
 	go n.checkFollowerHearbeat()
 	n.logger.Debug("node become master")
 }
@@ -253,9 +256,9 @@ func (n *Node) becomeFollower() {
 			break
 		}
 	}
-	n.loadbalancer.Add(n.masterMeta)
-	n.loadbalancer.Add(NewNodeMeta(n.selfInfo))
-	n.hearbeatMap.Set(n.selfInfo.Id, 0)
+	n.selfFollowers.Add(n.masterMeta)
+	n.selfFollowers.Add(NewNodeMeta(n.selfInfo))
+	n.selfFollowersHearbeat.Set(n.selfInfo.Id, 0)
 	go n.sendHearBeatLoop()
 	go func() {
 		// 从主节点拉取已存在的节点
@@ -264,13 +267,27 @@ func (n *Node) becomeFollower() {
 			panic(err)
 		}
 		for _, v := range nir.NodeInfos {
-			if _, ok := n.hearbeatMap.Get(v.Id); !ok {
-				n.loadbalancer.Add(NewNodeMeta(v))
-				n.hearbeatMap.Set(v.Id, getTime())
+			if _, ok := n.selfFollowersHearbeat.Get(v.Id); !ok {
+				n.selfFollowers.Add(NewNodeMeta(v))
+				n.selfFollowersHearbeat.Set(v.Id, getTime())
 			}
 		}
 	}()
 	n.logger.Debug("node become follwer")
+}
+
+func (n *Node) MasterPing(ctx context.Context, req *nodepb.NodeInfo) (resp *nodepb.PingResp, err error) {
+	nm, ok := n.peers.Get(req.Id)
+	if !ok {
+		nodeMeta := NewNodeMeta(req)
+		n.peers.Set(req.Id, nodeMeta)
+		n.totalNumber.Set(req.Id, loadbalance.NewDynamicWeighted[uint64, *NodeMeta]())
+		//
+		// go n.peerPing()
+		return
+	}
+
+	return
 }
 
 // Hearbeat 接收心跳
@@ -279,10 +296,10 @@ func (n *Node) HearbeatRpc(ctx context.Context, req *nodepb.NodeInfo) (resp *nod
 		return &nodepb.HearbeatResp{Ack: false, Redirect: n.masterMeta.info}, nil
 	}
 	// 如果当前发送消息的节点是从节点，更新心跳时间。
-	_, ok := n.hearbeatMap.Get(req.Id)
+	_, ok := n.selfFollowersHearbeat.Get(req.Id)
 	if ok {
 		t := getTime()
-		n.hearbeatMap.Set(req.Id, t)
+		n.selfFollowersHearbeat.Set(req.Id, t)
 		n.logger.Debug("receive hearbeat", zap.Uint64("node id", req.Id))
 		return &nodepb.HearbeatResp{Ack: true, Redirect: n.selfInfo}, nil
 	}
@@ -300,17 +317,17 @@ func (n *Node) NodeMessageRpc(ctx context.Context, req *nodepb.MessageReq) (resp
 	if req.MessageType == NodeUp {
 		// 节点上线
 		n.logger.Debug("node up message:", zap.Uint64("node id", req.Info.Id))
-		n.hearbeatMap.Set(req.Info.Id, getTime())
-		n.loadbalancer.Add(NewNodeMeta(req.Info))
+		n.selfFollowersHearbeat.Set(req.Info.Id, getTime())
+		n.selfFollowers.Add(NewNodeMeta(req.Info))
 		if n.nodeUpCallback != nil {
 			n.nodeUpCallback(req.Info)
 		}
 	} else if req.MessageType == NodeDown {
 		// 节点下线
 		n.logger.Debug("node down message:", zap.Uint64("node id", req.Info.Id))
-		nm, _ := n.loadbalancer.Get(req.Info.Id)
-		n.loadbalancer.Del(nm)
-		n.hearbeatMap.Del(req.Info.Id)
+		nm, _ := n.selfFollowers.Get(req.Info.Id)
+		n.selfFollowers.Del(nm)
+		n.selfFollowersHearbeat.Del(req.Info.Id)
 		if n.nodeDownCallback != nil {
 			n.nodeDownCallback(req.Info)
 		}
@@ -330,9 +347,9 @@ func (n *Node) NodeMessageRpc(ctx context.Context, req *nodepb.MessageReq) (resp
 			}
 		}
 		// n.masterMeta.UpdateInfo(req.Info)
-		nm, _ := n.loadbalancer.Get(req.Info.Id)
-		n.loadbalancer.Del(nm)
-		n.hearbeatMap.Del(req.Info.Id)
+		nm, _ := n.selfFollowers.Get(req.Info.Id)
+		n.selfFollowers.Del(nm)
+		n.selfFollowersHearbeat.Del(req.Info.Id)
 
 	}
 	return &nodepb.MessageResp{Ack: true}, err
@@ -349,8 +366,8 @@ func (n *Node) PeerInfosRpc(ctx context.Context, req *nodepb.EmptyMessage) (resp
 }
 
 func (n *Node) PeerIds() []uint64 {
-	ids := make([]uint64, 0, n.hearbeatMap.Len())
-	n.hearbeatMap.ForEach(func(id uint64, _ int64) bool {
+	ids := make([]uint64, 0, n.selfFollowersHearbeat.Len())
+	n.selfFollowersHearbeat.ForEach(func(id uint64, _ int64) bool {
 		ids = append(ids, id)
 		return true
 	})
@@ -358,8 +375,8 @@ func (n *Node) PeerIds() []uint64 {
 }
 
 func (n *Node) PeerInfos() []*nodepb.NodeInfo {
-	ids := make([]*nodepb.NodeInfo, 0, n.loadbalancer.Size())
-	n.loadbalancer.ForEach(func(_ uint64, nodeMeta *NodeMeta) bool {
+	ids := make([]*nodepb.NodeInfo, 0, n.selfFollowers.Size())
+	n.selfFollowers.ForEach(func(_ uint64, nodeMeta *NodeMeta) bool {
 		ids = append(ids, nodeMeta.info)
 		return true
 	})
@@ -380,9 +397,9 @@ func (n *Node) LeaveRpc(ctx context.Context, req *nodepb.LeaveReq) (resp *nodepb
 		// and specfic the current node is new master.
 		if req.Master.Id == n.selfInfo.Id {
 			// delete the RPC caller's message
-			n.hearbeatMap.Del(req.Self.Id)
-			nm, _ := n.loadbalancer.Get(req.Self.Id)
-			n.loadbalancer.Del(nm)
+			n.selfFollowersHearbeat.Del(req.Self.Id)
+			nm, _ := n.selfFollowers.Get(req.Self.Id)
+			n.selfFollowers.Del(nm)
 			n.asyncBroadcastMsg(MasterChange, req.Master)
 			n.becomeMaster()
 
@@ -423,19 +440,19 @@ func (n *Node) findTheUsableAndBiggestNodeId(selfId uint64, usable func(uint64) 
 }
 
 func (n *Node) clearNodeMetaAndInfo() {
-	ids := make([]uint64, 0, n.hearbeatMap.Len())
-	n.hearbeatMap.ForEach(func(id uint64, _ int64) bool {
+	ids := make([]uint64, 0, n.selfFollowersHearbeat.Len())
+	n.selfFollowersHearbeat.ForEach(func(id uint64, _ int64) bool {
 		ids = append(ids, id)
 		return true
 	})
-	n.hearbeatMap.Del(ids...)
+	n.selfFollowersHearbeat.Del(ids...)
 	n.logger.Debug("clear node services meta")
-	metas := make([]*NodeMeta, 0, n.loadbalancer.Size())
-	n.loadbalancer.ForEach(func(_ uint64, meta *NodeMeta) bool {
+	metas := make([]*NodeMeta, 0, n.selfFollowers.Size())
+	n.selfFollowers.ForEach(func(_ uint64, meta *NodeMeta) bool {
 		metas = append(metas, meta)
 		return true
 	})
-	n.loadbalancer.Del(metas...)
+	n.selfFollowers.Del(metas...)
 	n.logger.Debug("clear node hearbeat info")
 
 }
@@ -458,7 +475,7 @@ func (n *Node) Leave() error {
 	} else if character == Master {
 		// 获取所有节点ID,找出除了自己以外最大的ID
 		id := n.findTheUsableAndBiggestNodeId(n.selfInfo.Id, func(u uint64) bool {
-			meta, ok := n.loadbalancer.Get(u)
+			meta, ok := n.selfFollowers.Get(u)
 			if !ok {
 				return false
 			}
@@ -488,14 +505,14 @@ func (n *Node) Leave() error {
 
 func (n *Node) removeNodeMeta(ni *nodepb.NodeInfo) {
 	// 删除主节点信息
-	n.hearbeatMap.Del(ni.Id)
-	nm, _ := n.loadbalancer.Get(ni.Id)
-	n.loadbalancer.Del(nm)
+	n.selfFollowersHearbeat.Del(ni.Id)
+	nm, _ := n.selfFollowers.Get(ni.Id)
+	n.selfFollowers.Del(nm)
 }
 
 // nodeDown
 func (n *Node) asyncBroadcastMsg(messageType int64, nodeInfo *nodepb.NodeInfo) {
-	n.loadbalancer.ForEach(func(id uint64, meta *NodeMeta) bool {
+	n.selfFollowers.ForEach(func(id uint64, meta *NodeMeta) bool {
 		if id == n.selfInfo.Id {
 			return true
 		}
@@ -514,7 +531,7 @@ func (n *Node) MeetRpc(ctx context.Context, req *nodepb.NodeInfo) (resp *nodepb.
 	if n.GetCharacter() == Master {
 		// 节点上线
 		if req.Character == Follower {
-			_, exist := n.hearbeatMap.Get(req.Id)
+			_, exist := n.selfFollowersHearbeat.Get(req.Id)
 			if exist {
 				return &nodepb.MeetResp{Ack: true, Redirect: n.selfInfo}, nil
 			}
@@ -523,9 +540,9 @@ func (n *Node) MeetRpc(ctx context.Context, req *nodepb.NodeInfo) (resp *nodepb.
 			// 广播节点上线的消息
 			n.asyncBroadcastMsg(NodeUp, req)
 			// 添加节点元数据
-			n.hearbeatMap.Set(req.Id, getTime())
+			n.selfFollowersHearbeat.Set(req.Id, getTime())
 
-			n.loadbalancer.Add(nodeMeta)
+			n.selfFollowers.Add(nodeMeta)
 
 			// 返回ack=true
 			n.logger.Debug(fmt.Sprintf("new node add cluster id:%d meta:%v", nodeMeta.InstanceID(), nodeMeta))
@@ -586,12 +603,12 @@ func (n *Node) reconnect(nodeMeta *NodeMeta, count int) (err error) {
 
 func (n *Node) nodeHearbeatOutTime(id uint64) {
 	// get and remove node meta from loadbalancer,prevent from be repeat used.
-	nodeMeta, exist := n.loadbalancer.Get(id)
+	nodeMeta, exist := n.selfFollowers.Get(id)
 	if !exist {
 		n.logger.Debug("no node meta in loadbalancer...")
 		return
 	}
-	n.loadbalancer.Del(nodeMeta)
+	n.selfFollowers.Del(nodeMeta)
 	// try to connect...
 	err := n.reconnect(nodeMeta, n.retryCount)
 	if err != nil {
@@ -602,8 +619,8 @@ func (n *Node) nodeHearbeatOutTime(id uint64) {
 	// reconnect successful,add node meta to loadbalancer,
 	// reset node hearbeat information,
 	// and master node will go on checking node hearbeat.
-	n.loadbalancer.Add(nodeMeta)
-	n.hearbeatMap.Set(id, getTime()+(int64(n.heartbeatTime)>>1))
+	n.selfFollowers.Add(nodeMeta)
+	n.selfFollowersHearbeat.Set(id, getTime()+(int64(n.heartbeatTime)>>1))
 	n.logger.Debug("node recover hearbeat", zap.Uint64("nodeId", id))
 	// if reconnect fail,node info will be delete forever.
 }
@@ -620,7 +637,7 @@ func (n *Node) checkFollowerHearbeat() {
 		}
 		n.logger.Debug("start new once round node heartbeat checking....")
 		now := getTime()
-		n.hearbeatMap.ForEach(func(id uint64, lt int64) bool {
+		n.selfFollowersHearbeat.ForEach(func(id uint64, lt int64) bool {
 			if id == n.selfInfo.Id {
 				return true
 			}
@@ -628,7 +645,7 @@ func (n *Node) checkFollowerHearbeat() {
 				// remove node id from hearbeat map at first,
 				// prevent repeat scan same node in next time,
 				// start retry connection.
-				n.hearbeatMap.Del(id)
+				n.selfFollowersHearbeat.Del(id)
 				n.logger.Debug("node hearbeat out time ,retry connection:", zap.Uint64("node id:", id), zap.Int64("time", now-lt))
 				go n.nodeHearbeatOutTime(id)
 			}
@@ -652,8 +669,8 @@ func (n *Node) sendHearBeatLoop() {
 			err := n.reconnect(n.masterMeta, n.retryCount)
 			if err != nil {
 				// 重连失败，删除主节点信息，开始寻找新的主节点
-				n.loadbalancer.Del(n.masterMeta)
-				n.hearbeatMap.Del(n.masterMeta.InstanceID())
+				n.selfFollowers.Del(n.masterMeta)
+				n.selfFollowersHearbeat.Del(n.masterMeta.InstanceID())
 				n.logger.Debug("master node down....")
 			} else {
 				continue

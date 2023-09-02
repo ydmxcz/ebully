@@ -25,6 +25,7 @@ const (
 	Node_PeerIdListRpc_FullMethodName  = "/node.Node/PeerIdListRpc"
 	Node_MeetRpc_FullMethodName        = "/node.Node/MeetRpc"
 	Node_LeaveRpc_FullMethodName       = "/node.Node/LeaveRpc"
+	Node_MasterPing_FullMethodName     = "/node.Node/MasterPing"
 )
 
 // NodeClient is the client API for Node service.
@@ -37,6 +38,7 @@ type NodeClient interface {
 	PeerIdListRpc(ctx context.Context, in *EmptyMessage, opts ...grpc.CallOption) (*NodeIdListResp, error)
 	MeetRpc(ctx context.Context, in *NodeInfo, opts ...grpc.CallOption) (*MeetResp, error)
 	LeaveRpc(ctx context.Context, in *LeaveReq, opts ...grpc.CallOption) (*LeaveResp, error)
+	MasterPing(ctx context.Context, in *NodeInfo, opts ...grpc.CallOption) (*PingResp, error)
 }
 
 type nodeClient struct {
@@ -101,6 +103,15 @@ func (c *nodeClient) LeaveRpc(ctx context.Context, in *LeaveReq, opts ...grpc.Ca
 	return out, nil
 }
 
+func (c *nodeClient) MasterPing(ctx context.Context, in *NodeInfo, opts ...grpc.CallOption) (*PingResp, error) {
+	out := new(PingResp)
+	err := c.cc.Invoke(ctx, Node_MasterPing_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // NodeServer is the server API for Node service.
 // All implementations must embed UnimplementedNodeServer
 // for forward compatibility
@@ -111,6 +122,7 @@ type NodeServer interface {
 	PeerIdListRpc(context.Context, *EmptyMessage) (*NodeIdListResp, error)
 	MeetRpc(context.Context, *NodeInfo) (*MeetResp, error)
 	LeaveRpc(context.Context, *LeaveReq) (*LeaveResp, error)
+	MasterPing(context.Context, *NodeInfo) (*PingResp, error)
 	mustEmbedUnimplementedNodeServer()
 }
 
@@ -135,6 +147,9 @@ func (UnimplementedNodeServer) MeetRpc(context.Context, *NodeInfo) (*MeetResp, e
 }
 func (UnimplementedNodeServer) LeaveRpc(context.Context, *LeaveReq) (*LeaveResp, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method LeaveRpc not implemented")
+}
+func (UnimplementedNodeServer) MasterPing(context.Context, *NodeInfo) (*PingResp, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method MasterPing not implemented")
 }
 func (UnimplementedNodeServer) mustEmbedUnimplementedNodeServer() {}
 
@@ -257,6 +272,24 @@ func _Node_LeaveRpc_Handler(srv interface{}, ctx context.Context, dec func(inter
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Node_MasterPing_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(NodeInfo)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServer).MasterPing(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Node_MasterPing_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServer).MasterPing(ctx, req.(*NodeInfo))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Node_ServiceDesc is the grpc.ServiceDesc for Node service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -287,6 +320,10 @@ var Node_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "LeaveRpc",
 			Handler:    _Node_LeaveRpc_Handler,
+		},
+		{
+			MethodName: "MasterPing",
+			Handler:    _Node_MasterPing_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

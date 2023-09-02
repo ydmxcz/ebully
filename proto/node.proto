@@ -49,6 +49,11 @@ message LeaveResp {
   bool ack=1;
 }
 
+
+message PingResp {
+  bool ack=1;
+}
+
 service Node {
   rpc HearbeatRpc (NodeInfo) returns (HearbeatResp) {}
   rpc NodeMessageRpc(MessageReq) returns (MessageResp) {}
@@ -56,6 +61,7 @@ service Node {
   rpc PeerIdListRpc(EmptyMessage) returns(NodeIdListResp) {}
   rpc MeetRpc(NodeInfo) returns(MeetResp) {}
   rpc LeaveRpc(LeaveReq) returns(LeaveResp){}
+  rpc MasterPing(NodeInfo) returns(PingResp) {}
 }
 
 
